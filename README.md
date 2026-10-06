@@ -33,9 +33,11 @@ npm run validate
 En la escena:
 
 - WASD o flechas: mover al jugador.
-- Clic: elegir un destino para el guardia.
+- Clic: elegir un destino para el guardia (suspende la patrulla).
 - Espacio: alternar BFS y A*.
 - Q: emitir un sonido desde el jugador.
+- P: activar o suspender la patrulla del guardia.
+- E: lanzar un distractor sonoro en la última dirección de movimiento (recarga de 3 s).
 - R: reiniciar el escenario.
 
 ## Propósito

@@ -1,0 +1,47 @@
+Registro de telemetría de la sesión de comprobación visual
+Fecha: 6/10/2026, entre 18:16 y 18:20 (hora de Argentina)
+Ejecución: `npm run dev` (Vite 6.4.3) en la computadora del estudiante, http://localhost:5173/
+Origen: `window.__telemetria`, los mismos eventos que el juego escribe en la consola.
+Formato: t=<ms de escena> <sujeto>: <estado anterior> -> <estado nuevo> | evento | causa
+
+t=8034 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P2
+t=9234 patrulla: PAUSA -> EN CAMINO | evento=fin de la pausa | causa=hacia P2
+t=17068 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P3
+t=18268 patrulla: PAUSA -> EN CAMINO | evento=fin de la pausa | causa=hacia P3
+t=20884 distractor: listo -> recarga | evento=tecla E | causa=cae en 7,2
+t=27035 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P4
+t=28251 patrulla: PAUSA -> EN CAMINO | evento=fin de la pausa | causa=hacia P4
+t=32335 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P1
+t=33568 patrulla: PAUSA -> EN CAMINO | evento=fin de la pausa | causa=hacia P1
+t=35068 patrulla: activa -> suspendida | evento=clic | causa=destino manual
+t=40602 alerta: TRANQUILO -> SOSPECHA | evento=cambio de nivel | causa=medidor 36, vision si
+t=44652 alerta: SOSPECHA -> TRANQUILO | evento=cambio de nivel | causa=medidor 35, vision no
+t=61169 alerta: TRANQUILO -> SOSPECHA | evento=cambio de nivel | causa=medidor 36, vision si
+t=62236 alerta: SOSPECHA -> ALERTA | evento=cambio de nivel | causa=medidor 100, vision si
+t=62236 impacto: sin efecto -> temblor+destello+signo | evento=entrada en ALERTA | causa=impacto 1
+t=75786 alerta: ALERTA -> SOSPECHA | evento=cambio de nivel | causa=medidor 58, vision no
+t=77036 alerta: SOSPECHA -> TRANQUILO | evento=cambio de nivel | causa=medidor 33, vision no
+t=106220 alerta: TRANQUILO -> SOSPECHA | evento=cambio de nivel | causa=medidor 36, vision si
+t=107320 alerta: SOSPECHA -> ALERTA | evento=cambio de nivel | causa=medidor 100, vision si
+t=107320 impacto: sin efecto -> temblor+destello+signo | evento=entrada en ALERTA | causa=impacto 2
+t=129054 alerta: ALERTA -> SOSPECHA | evento=cambio de nivel | causa=medidor 60, vision no
+t=130304 alerta: SOSPECHA -> TRANQUILO | evento=cambio de nivel | causa=medidor 35, vision no
+t=140488 patrulla: suspendida -> activa | evento=tecla P | causa=decision del jugador
+t=141255 distractor: listo -> recarga | evento=tecla E | causa=cae en 8,2
+t=141255 guardia: PATRULLA -> INVESTIGA | evento=sonido oido | causa=origen 8,2
+t=142021 guardia: INVESTIGA -> MIRA | evento=llegada al origen | causa=ruta completada
+t=143521 guardia: MIRA -> PATRULLA | evento=fin de la espera | causa=1500 ms cumplidos
+t=153472 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P2
+t=154672 patrulla: PAUSA -> EN CAMINO | evento=fin de la pausa | causa=hacia P2
+t=159389 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P3
+t=160589 patrulla: PAUSA -> EN CAMINO | evento=fin de la pausa | causa=hacia P3
+t=168939 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P4
+t=184189 patrulla: EN CAMINO -> PAUSA | evento=llegada al punto | causa=proximo P2
+
+Notas de lectura
+- En t=20884 se apretó E dos veces con 0,65 s de diferencia y el guardia estaba lejos: hay un solo
+  lanzamiento (recarga) y ningún evento "guardia" (sonido fuera de alcance).
+- El panel donde se ejecutó dibuja pocos cuadros por segundo, por eso los cambios de nivel se
+  registran con el medidor uno o dos puntos pasado el umbral (36 en lugar de 35, 58 en lugar de 60).
+- Las entradas del jugador se enviaron como eventos de teclado desde la consola del navegador y el
+  destino manual con un clic real sobre el escenario.
