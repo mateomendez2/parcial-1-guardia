@@ -1,14 +1,11 @@
 import Phaser from "phaser";
 import {
-  GUARD_START,
+  FIXED_LEVEL,
   GRID_HEIGHT,
   GRID_WIDTH,
-  LAB_MAP,
-  PATROL_POINTS,
-  PLAYER_START,
   TILE_SIZE,
 } from "../../application/simulation/labLevel";
-import { calculateRoute } from "../../application/simulation/navigationDemo";
+import { planRoute, type NavigationMode } from "../../application/simulation/navigationMode";
 import {
   firstStepDirection,
   planPatrolLeg,
@@ -41,6 +38,14 @@ import {
   updateInvestigation,
   type InvestigationState,
 } from "../../domain/behavior/distraction";
+import { evaluateOutcome, type GameOutcome } from "../../domain/behavior/gameOutcome";
+import {
+  decideGuardBehavior,
+  initialGuardBehaviorState,
+  type GuardBehaviorState,
+  type GuardState,
+} from "../../domain/behavior/guardBehavior";
+import { generateLevel, type Level } from "../../domain/level/levelGenerator";
 import {
   initialPatrolState,
   resumePatrol,
@@ -48,7 +53,7 @@ import {
   withPatrolTarget,
   type PatrolState,
 } from "../../domain/behavior/patrol";
-import { cellCenter, isWalkable, worldToCell, type GridPoint } from "../../domain/model/grid";
+import { cellCenter, cellKey, isWalkable, worldToCell, type GridPoint } from "../../domain/model/grid";
 import type { Vector2 } from "../../domain/model/vector";
 import { advanceAlongPath } from "../../domain/navigation/pathFollower";
 import type { SearchAlgorithm, SearchResult, SearchStatus } from "../../domain/navigation/search";
@@ -80,6 +85,19 @@ const LEVEL_COLORS: Readonly<Record<AlertLevel, number>> = {
   suspicious: 0xe5b454,
   alert: 0xe16969,
 };
+const FSM_LABELS: Readonly<Record<GuardState, string>> = {
+  patrolling: "PATRULLA",
+  pursuing: "PERSECUCION",
+  investigating: "INVESTIGAR",
+  returning: "VOLVER",
+};
+
+interface SceneData {
+  readonly seed?: number;
+  readonly algorithm?: SearchAlgorithm;
+  readonly mode?: NavigationMode;
+}
+
 const STATUS_LABELS: Readonly<Record<SearchStatus, string>> = {
   success: "EXITO",
   unreachable: "INALCANZABLE",
@@ -106,7 +124,9 @@ export class GameScene extends Phaser.Scene {
   private reset!: Phaser.Input.Keyboard.Key;
   private toggleAlgorithm!: Phaser.Input.Keyboard.Key;
   private emitSound!: Phaser.Input.Keyboard.Key;
-  private togglePatrol!: Phaser.Input.Keyboard.Key;
+  private toggleNavigation!: Phaser.Input.Keyboard.Key;
+  private newLevel!: Phaser.Input.Keyboard.Key;
+  private outcomeText!: Phaser.GameObjects.Text;
   private throwDistraction!: Phaser.Input.Keyboard.Key;
   private alertGraphics!: Phaser.GameObjects.Graphics;
   private alertLabel!: Phaser.GameObjects.Text;
@@ -118,7 +138,7 @@ export class GameScene extends Phaser.Scene {
   private lastKnownMarker!: Phaser.GameObjects.Arc;
   private navigationHud!: Phaser.GameObjects.Text;
   private navigationAlgorithm: SearchAlgorithm = "astar";
-  private navigationGoal: GridPoint = GUARD_START;
+  private navigationGoal: GridPoint = { x: 0, y: 0 };
   private navigationSummary: readonly string[] = [];
   private guardFacing: Vector2 = { x: -1, y: 0 };
   private guardWaypoints: readonly Vector2[] = [];
@@ -126,6 +146,13 @@ export class GameScene extends Phaser.Scene {
   private perceptionState: PerceptionSimulationState = initialPerceptionState();
   private patrolState: PatrolState = initialPatrolState();
   private patrolEnabled = true;
+  private level!: Level;
+  private navigationMode: NavigationMode = "short";
+  private behavior: GuardBehaviorState = initialGuardBehaviorState();
+  private chaseTargetKey: string | null = null;
+  private investigateArrived = false;
+  private safeFallback = false;
+  private outcome: GameOutcome = "playing";
   private patrolBlocked = false;
   private pendingPatrolLeg: PatrolLeg | null = null;
   private alertMeter: AlertMeterState = initialAlertMeter();
@@ -143,9 +170,16 @@ export class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
-  public create(): void {
-    this.navigationAlgorithm = "astar";
-    this.navigationGoal = GUARD_START;
+  public create(data: SceneData = {}): void {
+    this.level = generateLevel(data.seed ?? 1, FIXED_LEVEL);
+    this.navigationAlgorithm = data.algorithm ?? "astar";
+    this.navigationMode = data.mode ?? "short";
+    this.navigationGoal = this.level.guardStart;
+    this.behavior = initialGuardBehaviorState();
+    this.chaseTargetKey = null;
+    this.investigateArrived = false;
+    this.safeFallback = false;
+    this.outcome = "playing";
     this.guardFacing = { x: -1, y: 0 };
     this.guardWaypoints = [];
     this.nextWaypoint = 0;
@@ -169,11 +203,12 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.resetFX();
     this.cameras.main.setBackgroundColor("#10161c");
     this.drawGrid();
+    this.drawLevelZones();
 
     const walls = this.physics.add.staticGroup();
     for (let y = 0; y < GRID_HEIGHT; y += 1) {
       for (let x = 0; x < GRID_WIDTH; x += 1) {
-        if (!isWalkable(LAB_MAP, { x, y })) {
+        if (!isWalkable(this.level.map, { x, y })) {
           const center = cellCenter({ x, y }, TILE_SIZE);
           const wall = this.add.rectangle(center.x, center.y, TILE_SIZE, TILE_SIZE, 0x27333d);
           wall.setStrokeStyle(1, 0x3a4c58);
@@ -182,7 +217,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    const spawn = cellCenter(PLAYER_START, TILE_SIZE);
+    const spawn = cellCenter(this.level.playerStart, TILE_SIZE);
     this.player = this.add.rectangle(spawn.x, spawn.y, 20, 20, 0xe5b454);
     this.player.setStrokeStyle(2, 0xffd98a);
     this.player.setDepth(4);
@@ -202,14 +237,15 @@ export class GameScene extends Phaser.Scene {
     this.moveLeft = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
     this.moveRight = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
     this.reset = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
-    this.toggleAlgorithm = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.toggleAlgorithm = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
     this.emitSound = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
-    this.togglePatrol = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    this.toggleNavigation = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
+    this.newLevel = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
     this.throwDistraction = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
 
     this.perceptionGraphics = this.add.graphics().setDepth(1);
     this.navigationGraphics = this.add.graphics().setDepth(2);
-    const guardPosition = cellCenter(GUARD_START, TILE_SIZE);
+    const guardPosition = cellCenter(this.level.guardStart, TILE_SIZE);
     this.guard = this.add
       .circle(guardPosition.x, guardPosition.y, 11, 0x6b8afd)
       .setStrokeStyle(2, 0xb9c5ff)
@@ -225,7 +261,7 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     this.add
-      .text(16, 14, "H3 / PERCEPCION Y MOVIMIENTO", {
+      .text(16, 14, "TP FINAL / GUARDIA DE SIGILO", {
         color: "#9eb4c2",
         fontFamily: "monospace",
         fontSize: "14px",
@@ -269,7 +305,18 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     this.drawPatrolPoints();
-    this.input.on("pointerdown", this.handlePointerDown, this);
+    this.outcomeText = this.add
+      .text(GRID_WIDTH * TILE_SIZE / 2, GRID_HEIGHT * TILE_SIZE / 2, "", {
+        align: "center",
+        backgroundColor: "#10161cee",
+        color: "#ffffff",
+        fontFamily: "monospace",
+        fontSize: "26px",
+        padding: { x: 18, y: 12 },
+      })
+      .setOrigin(0.5)
+      .setDepth(20)
+      .setVisible(false);
     this.startPatrolLeg();
     this.updatePerception(0);
     // The first real update must not count the time elapsed before this scene started.
@@ -278,12 +325,26 @@ export class GameScene extends Phaser.Scene {
 
   public update(time: number, delta: number): void {
     if (Phaser.Input.Keyboard.JustDown(this.reset)) {
-      this.scene.restart();
+      this.restartWith(this.level.seed);
+      return;
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.newLevel)) {
+      this.restartWith(Math.floor(Math.random() * 1_000_000) + 2);
+      return;
+    }
+    if (this.outcome !== "playing") {
+      this.playerBody.setVelocity(0, 0);
       return;
     }
 
     if (Phaser.Input.Keyboard.JustDown(this.toggleAlgorithm)) {
       this.navigationAlgorithm = this.navigationAlgorithm === "astar" ? "bfs" : "astar";
+      this.renderNavigation();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.toggleNavigation)) {
+      this.navigationMode = this.navigationMode === "short" ? "safe" : "short";
+      this.record("navegacion", this.navigationMode === "safe" ? "corta" : "segura", "tecla N",
+        this.navigationMode === "safe" ? "segura" : "corta", "decision del jugador");
       this.renderNavigation();
     }
 
@@ -311,15 +372,140 @@ export class GameScene extends Phaser.Scene {
       this.tryThrowDistraction(time);
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.togglePatrol)) {
-      this.setPatrolEnabled(!this.patrolEnabled);
-    }
-
     this.playerBody.setVelocity(velocity.x, velocity.y);
     this.updateGuardInvestigation(time);
     this.updateGuardPatrol(time);
     this.updateGuardMovement(delta);
     this.updatePerception(time);
+  }
+
+  private restartWith(seed: number): void {
+    this.scene.restart({
+      seed,
+      algorithm: this.navigationAlgorithm,
+      mode: this.navigationMode,
+    } satisfies SceneData);
+  }
+
+  private route(from: GridPoint, goal: GridPoint): SearchResult {
+    const planned = planRoute(
+      this.level.map,
+      from,
+      goal,
+      this.navigationAlgorithm,
+      this.navigationMode,
+      this.level.riskCells,
+    );
+    this.safeFallback = planned.safeFallback;
+    return planned.result;
+  }
+
+  private drawLevelZones(): void {
+    for (const cell of this.level.riskCells) {
+      const center = cellCenter(cell, TILE_SIZE);
+      this.add.rectangle(center.x, center.y, TILE_SIZE - 2, TILE_SIZE - 2, 0x8a5a1c, 0.55);
+    }
+    const exit = cellCenter(this.level.exit, TILE_SIZE);
+    this.add.rectangle(exit.x, exit.y, TILE_SIZE - 4, TILE_SIZE - 4, 0x2f9e5b, 0.85);
+    this.add
+      .text(exit.x, exit.y, "SALIDA", { color: "#d8ffe6", fontFamily: "monospace", fontSize: "9px" })
+      .setOrigin(0.5)
+      .setDepth(3);
+  }
+
+  private guardArrived(): boolean {
+    return this.nextWaypoint >= this.guardWaypoints.length;
+  }
+
+  private updateGuardBehavior(time: number, playerVisible: boolean): void {
+    const previous = this.behavior.state;
+    let current = this.behavior;
+    // The 3 s investigation timer starts when the guard reaches the last known position.
+    if (current.state === "investigating" && !this.investigateArrived) {
+      current = { state: "investigating", investigationStartedAtMs: time };
+    }
+    this.behavior = decideGuardBehavior(current, {
+      timeMs: time,
+      playerVisible,
+      memory: this.perceptionState.memory,
+    }).state;
+    const next = this.behavior.state;
+    const guardCell = worldToCell({ x: this.guard.x, y: this.guard.y }, TILE_SIZE);
+
+    if (next !== previous) {
+      this.record("fsm", FSM_LABELS[previous], playerVisible ? "jugador visible" : "sin vision",
+        FSM_LABELS[next], `memoria ${this.perceptionState.memory.source ?? "-"}`);
+    }
+
+    if (next === "pursuing") {
+      if (this.investigation) {
+        this.investigation = null;
+        this.distractionMarker.setVisible(false);
+      }
+      const playerCell = worldToCell({ x: this.player.x, y: this.player.y }, TILE_SIZE);
+      if (cellKey(playerCell) !== this.chaseTargetKey) {
+        this.chaseTargetKey = cellKey(playerCell);
+        this.navigationGoal = playerCell;
+        this.applyRoute(this.route(guardCell, playerCell));
+      }
+      return;
+    }
+    this.chaseTargetKey = null;
+
+    if (next === "investigating") {
+      const lastKnown = this.perceptionState.memory.lastKnownPosition;
+      if (previous !== "investigating" && lastKnown) {
+        this.investigateArrived = false;
+        this.navigationGoal = worldToCell(lastKnown, TILE_SIZE);
+        this.applyRoute(this.route(guardCell, this.navigationGoal));
+      } else if (!this.investigateArrived && this.guardArrived()) {
+        this.investigateArrived = true;
+      }
+      return;
+    }
+
+    if (next === "returning") {
+      if (previous !== "returning") {
+        const points = this.level.patrolPoints;
+        let nearest = 0;
+        points.forEach((point, index) => {
+          const best = points[nearest];
+          if (best && Math.abs(point.x - guardCell.x) + Math.abs(point.y - guardCell.y)
+            < Math.abs(best.x - guardCell.x) + Math.abs(best.y - guardCell.y)) {
+            nearest = index;
+          }
+        });
+        this.patrolState = { targetIndex: nearest, phase: "moving", pauseStartedAtMs: null };
+        this.startPatrolLeg();
+      } else if (!this.investigation && this.guardArrived()) {
+        this.behavior = initialGuardBehaviorState();
+        this.record("fsm", "VOLVER", "llegada al punto", "PATRULLA", "punto de patrulla alcanzado");
+      }
+    }
+  }
+
+  private updateOutcome(): void {
+    if (this.outcome !== "playing") {
+      return;
+    }
+    this.outcome = evaluateOutcome({
+      playerCell: worldToCell({ x: this.player.x, y: this.player.y }, TILE_SIZE),
+      exit: this.level.exit,
+      player: { x: this.player.x, y: this.player.y },
+      guard: { x: this.guard.x, y: this.guard.y },
+    });
+    if (this.outcome === "playing") {
+      return;
+    }
+    this.guardWaypoints = [];
+    this.nextWaypoint = 0;
+    this.playerBody.setVelocity(0, 0);
+    this.outcomeText
+      .setText(`${this.outcome === "won" ? "GANASTE" : "TE ATRAPARON"}\nR: mismo escenario  G: otro`)
+      .setColor(this.outcome === "won" ? "#8fe3a8" : "#ff8a8a")
+      .setVisible(true);
+    this.record("partida", "jugando", "fin", this.outcome === "won" ? "gano" : "atrapado",
+      `semilla ${this.level.seed}`);
   }
 
   private drawGrid(): void {
@@ -335,7 +521,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawPatrolPoints(): void {
-    PATROL_POINTS.forEach((point, index) => {
+    this.level.patrolPoints.forEach((point, index) => {
       const center = cellCenter(point, TILE_SIZE);
       this.add
         .rectangle(center.x, center.y, 14, 14, 0x000000, 0)
@@ -350,16 +536,6 @@ export class GameScene extends Phaser.Scene {
         })
         .setDepth(3);
     });
-  }
-
-  private setPatrolEnabled(enabled: boolean): void {
-    this.patrolEnabled = enabled;
-    this.record("patrulla", enabled ? "suspendida" : "activa", "tecla P",
-      enabled ? "activa" : "suspendida", "decision del jugador");
-    if (enabled && !this.investigation) {
-      this.patrolState = resumePatrol(this.patrolState);
-      this.startPatrolLeg();
-    }
   }
 
   private record(
@@ -382,7 +558,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const playerCell = worldToCell({ x: this.player.x, y: this.player.y }, TILE_SIZE);
-    const landing = distractionLanding(LAB_MAP, playerCell, this.lastPlayerDirection);
+    const landing = distractionLanding(this.level.map, playerCell, this.lastPlayerDirection);
     if (!landing) {
       return;
     }
@@ -400,14 +576,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   private startSoundInvestigation(origin: Vector2, emittedAtMs: number): void {
-    if (this.investigatedSoundAtMs === emittedAtMs) {
+    if (
+      this.investigatedSoundAtMs === emittedAtMs
+      || this.behavior.state === "pursuing"
+      || this.behavior.state === "investigating"
+    ) {
       return;
     }
     this.investigatedSoundAtMs = emittedAtMs;
 
     const guardCell = worldToCell({ x: this.guard.x, y: this.guard.y }, TILE_SIZE);
     const goal = worldToCell(origin, TILE_SIZE);
-    const route = calculateRoute(LAB_MAP, guardCell, goal, this.navigationAlgorithm);
+    const route = this.route(guardCell, goal);
     this.soundUnreachable = route.status !== "success";
     if (this.soundUnreachable) {
       this.record("guardia", this.guardActivity(), "sonido oido", this.guardActivity(),
@@ -469,20 +649,21 @@ export class GameScene extends Phaser.Scene {
   private planNextPatrolLeg(): PatrolLeg | null {
     const guardCell = worldToCell({ x: this.guard.x, y: this.guard.y }, TILE_SIZE);
     const leg = planPatrolLeg(
-      LAB_MAP,
+      this.level.map,
       guardCell,
-      PATROL_POINTS,
+      this.level.patrolPoints,
       this.patrolState.targetIndex,
       this.navigationAlgorithm,
+      (from, goal) => this.route(from, goal),
     );
     if (leg) {
-      this.patrolState = withPatrolTarget(this.patrolState, leg.targetIndex, PATROL_POINTS.length);
+      this.patrolState = withPatrolTarget(this.patrolState, leg.targetIndex, this.level.patrolPoints.length);
     }
     return leg;
   }
 
   private followPatrolLeg(leg: PatrolLeg): void {
-    const goal = PATROL_POINTS[leg.targetIndex];
+    const goal = this.level.patrolPoints[leg.targetIndex];
     if (!goal) {
       throw new Error("Patrol point invariant failed.");
     }
@@ -491,13 +672,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateGuardPatrol(time: number): void {
-    if (!this.patrolEnabled || this.patrolBlocked || this.investigation) {
+    if (
+      !this.patrolEnabled
+      || this.patrolBlocked
+      || this.investigation
+      || this.behavior.state !== "patrolling"
+    ) {
       return;
     }
 
     const wasPausing = this.patrolState.phase === "pausing";
     const result = updatePatrol(this.patrolState, {
-      pointCount: PATROL_POINTS.length,
+      pointCount: this.level.patrolPoints.length,
       arrived: this.nextWaypoint >= this.guardWaypoints.length,
       timeMs: time,
     });
@@ -526,7 +712,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private patrolSummary(): string {
-    const point = `P${this.patrolState.targetIndex + 1}/${PATROL_POINTS.length}`;
+    const point = `P${this.patrolState.targetIndex + 1}/${this.level.patrolPoints.length}`;
     if (!this.patrolEnabled) {
       return `patrulla ${point} SUSPENDIDA`;
     }
@@ -536,26 +722,9 @@ export class GameScene extends Phaser.Scene {
     return `patrulla ${point} ${this.patrolState.phase === "pausing" ? "PAUSA" : "EN CAMINO"}`;
   }
 
-  private handlePointerDown(pointer: Phaser.Input.Pointer): void {
-    if (this.patrolEnabled) {
-      this.record("patrulla", "activa", "clic", "suspendida", "destino manual");
-    }
-    this.patrolEnabled = false;
-    this.investigation = null;
-    this.distractionMarker.setVisible(false);
-    this.navigationGoal = worldToCell({ x: pointer.worldX, y: pointer.worldY }, TILE_SIZE);
-    this.renderNavigation();
-  }
-
   private renderNavigation(): void {
     const guardCell = worldToCell({ x: this.guard.x, y: this.guard.y }, TILE_SIZE);
-    const result = calculateRoute(
-      LAB_MAP,
-      guardCell,
-      this.navigationGoal,
-      this.navigationAlgorithm,
-    );
-    this.applyRoute(result);
+    this.applyRoute(this.route(guardCell, this.navigationGoal));
   }
 
   private applyRoute(result: SearchResult): void {
@@ -626,7 +795,7 @@ export class GameScene extends Phaser.Scene {
     const observer = { x: this.guard.x, y: this.guard.y };
     const target = { x: this.player.x, y: this.player.y };
     const frame = updatePerceptionSimulation(this.perceptionState, {
-      map: LAB_MAP,
+      map: this.level.map,
       tileSize: TILE_SIZE,
       observer,
       facing: this.guardFacing,
@@ -644,6 +813,8 @@ export class GameScene extends Phaser.Scene {
       );
     }
     this.updateAlert(time, frame.vision.visible);
+    this.updateGuardBehavior(time, frame.vision.visible);
+    this.updateOutcome();
 
     this.drawPerception(frame.vision);
     this.drawAlert(time);
@@ -698,7 +869,7 @@ export class GameScene extends Phaser.Scene {
   private drawPerception(vision: VisionResult): void {
     this.perceptionGraphics.clear();
     const outline = visionConeOutline({
-      map: LAB_MAP,
+      map: this.level.map,
       tileSize: TILE_SIZE,
       observer: { x: this.guard.x, y: this.guard.y },
       facing: this.guardFacing,
@@ -759,7 +930,12 @@ export class GameScene extends Phaser.Scene {
       : "-";
 
     this.navigationHud.setText([
+      `escenario ${this.level.fallback ? "FIJO" : `semilla ${this.level.seed}`}`,
+      `navegacion ${this.navigationMode === "safe" ? "SEGURA" : "CORTA"}${
+        this.safeFallback ? " (sin ruta segura)" : ""
+      }`,
       ...this.navigationSummary,
+      `fsm ${FSM_LABELS[this.behavior.state]}`,
       this.patrolSummary(),
       `alerta ${Math.round(this.alertMeter.value)} ${LEVEL_LABELS[this.alertMeter.level]}`,
       `impactos ${this.impactCount} | camara ${

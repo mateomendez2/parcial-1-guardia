@@ -18,6 +18,8 @@ export function planPatrolLeg(
   points: readonly GridPoint[],
   preferredIndex: number,
   algorithm: SearchAlgorithm,
+  route: (from: GridPoint, goal: GridPoint) => SearchResult =
+    (from, goal) => calculateRoute(map, from, goal, algorithm),
 ): PatrolLeg | null {
   if (!Number.isInteger(preferredIndex) || preferredIndex < 0 || preferredIndex >= points.length) {
     throw new Error("Preferred patrol index is outside the patrol points.");
@@ -29,9 +31,9 @@ export function planPatrolLeg(
     if (!point) {
       throw new Error("Patrol point invariant failed.");
     }
-    const route = calculateRoute(map, from, point, algorithm);
-    if (route.status === "success") {
-      return { targetIndex, route };
+    const result = route(from, point);
+    if (result.status === "success") {
+      return { targetIndex, route: result };
     }
   }
 

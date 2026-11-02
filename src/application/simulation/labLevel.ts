@@ -50,3 +50,15 @@ function expandAreas(areas: readonly BlockedRectangle[]): GridPoint[] {
 }
 
 export const LAB_MAP = createGridMap(GRID_WIDTH, GRID_HEIGHT, expandAreas(BLOCKED_AREAS));
+
+export const LAB_EXIT: GridPoint = { x: 27, y: 9 };
+
+/** Fixed laboratory level, used when generation fails and as a known reference. */
+export const FIXED_LEVEL = {
+  map: LAB_MAP,
+  riskCells: [] as readonly GridPoint[],
+  playerStart: PLAYER_START,
+  exit: LAB_EXIT,
+  guardStart: GUARD_START,
+  patrolPoints: PATROL_POINTS,
+};

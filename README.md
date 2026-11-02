@@ -1,85 +1,48 @@
----
-id: laboratorio-guardia-sigilo
-titulo: Laboratorio Guardia de Sigilo
-tipo: indice
-audiencia: estudiante
-acceso: publico
-version: 3
----
+# Guardia de Sigilo — TP final integrador (PIAPC 2026)
 
-# Laboratorio Guardia de Sigilo
+**Integrantes:** Mateo Méndez y Natasha Pistarelli.
 
-Proyecto canónico de PIAPC 2026 para aplicar desarrollo agéntico e inteligencia artificial de videojuegos.
+Juego de sigilo 2D visto desde arriba. El jugador cruza el nivel hasta la **salida** sin que el guardia lo atrape. El guardia es un NPC con visión, oído y memoria, que decide con una máquina de estados (patrulla, persecución, investigar, volver). Cada escenario se genera a partir de una semilla y siempre es jugable.
 
-## Estado
-
-H0 a H3 implementados: escenario base, repositorio preparado para agentes, navegación BFS/A* y percepción con memoria. La máquina de estados se incorpora en H4.
-
-## Ejecución
+## Cómo ejecutarlo
 
 Requiere Node.js 22 o superior.
 
 ```bash
 npm ci
-npm run dev
+npm run dev        # abre el juego en http://localhost:5173
+npm run validate   # tipos, pruebas y compilación
 ```
 
-Validación completa:
+## Controles
 
-```bash
-npm run validate
-```
+| Tecla | Acción |
+|---|---|
+| WASD / flechas | Mover al jugador |
+| B | Cambiar algoritmo de búsqueda: A* / BFS |
+| N | Cambiar navegación: ruta corta / ruta segura |
+| G | Generar otro escenario |
+| R | Reiniciar el mismo escenario |
+| E | Lanzar un distractor sonoro (recarga de 3 s) |
+| Q | Hacer ruido en la posición del jugador |
 
-En la escena:
+El HUD (arriba a la derecha) muestra la semilla del escenario, la navegación, el algoritmo con costo y nodos expandidos, el estado de la máquina de estados, la patrulla y la percepción. La ruta calculada se dibuja en celeste y los casilleros explorados en azul.
 
-- WASD o flechas: mover al jugador.
-- Clic: elegir un destino para el guardia (suspende la patrulla).
-- Espacio: alternar BFS y A*.
-- Q: emitir un sonido desde el jugador.
-- P: activar o suspender la patrulla del guardia.
-- E: lanzar un distractor sonoro en la última dirección de movimiento (recarga de 3 s).
-- R: reiniciar el escenario.
+## Qué implementa
 
-## Propósito
+- **Búsqueda:** BFS y A* con distancia Manhattan (`src/domain/navigation/search.ts`).
+- **Navegación:** ruta corta (todas las celdas cuestan 1) y ruta segura, que evita las zonas de riesgo (marrones). Con A* esas zonas cuestan 5; con BFS, que no maneja costos, se prohíben y, si no queda camino, se usa la ruta corta (`src/application/simulation/navigationMode.ts`).
+- **Escenarios variables:** paredes, zonas de riesgo, salida, guardia y puntos de patrulla al azar con reglas de validez comprobadas con BFS (`src/domain/level/levelGenerator.ts`). La patrulla recalcula sus rutas en cada escenario.
+- **Comportamiento:** FSM del guardia (`src/domain/behavior/guardBehavior.ts`) conectada a la escena, más investigación de sonidos y distractores.
+- **Ganar y perder:** `src/domain/behavior/gameOutcome.ts`.
 
-Construir un juego 2D cenital mínimo donde un guardia:
+## Documentación
 
-- patrulla puntos definidos;
-- percibe al jugador mediante visión y sonido;
-- conserva una última posición conocida;
-- navega mediante A*;
-- sigue caminos sin mezclar búsqueda y locomoción;
-- decide mediante una máquina de estados;
-- expone telemetría suficiente para comprender y probar su conducta.
+- GDD: [`docs/tp-final/GDD.md`](docs/tp-final/GDD.md)
+- Specs: [`specs/tp-final/`](specs/tp-final/)
+- Presentación: [`docs/tp-final/presentacion`](docs/tp-final/) (para la clase del 4/11)
+- Trabajos anteriores: [`docs/upgrades/`](docs/upgrades/) y [`docs/practica-navegacion/`](docs/practica-navegacion/)
 
-El proyecto no busca producir un videojuego comercial. Es un entorno de experimentación controlado, reproducible y apto para personas y agentes de desarrollo.
+## Arquitectura
 
-## Documentos
-
-- [Especificación del producto](specs/01-producto.md)
-- [Especificación pedagógica](specs/02-pedagogica.md)
-- [Arquitectura](docs/arquitectura.md)
-- [Hitos](docs/hitos.md)
-- [Contrato para proyectos alternativos](docs/contrato-proyecto-alternativo.md)
-- [Decisiones técnicas](docs/decisiones-tecnicas.md)
-- [Auditoría H1](docs/auditoria-h1.md)
-- [Permisos recomendados](docs/permisos-recomendados.md)
-- [Registro de intervención](docs/plantillas/registro-intervencion.md)
-- [Evidencia de pruebas](docs/plantillas/evidencia-pruebas.md)
-- [H3: percepción y movimiento](docs/h3-percepcion-movimiento.md)
-- [Intervención H3](docs/evidencias/h3-intervencion.md)
-- [Validación H3](docs/evidencias/h3-validacion.md)
-
-## Tecnología de referencia
-
-- Phaser con TypeScript.
-- Vite para desarrollo y compilación.
-- Vitest para pruebas de dominio.
-- Node.js 22 o superior.
-- npm y archivo de bloqueo para instalaciones reproducibles.
-
-El estudiante puede adoptar Unity u otro entorno si cumple el contrato de equivalencia.
-
-## Restricción principal
-
-La lógica de navegación, percepción y decisión no dependerá de Phaser. El motor será un adaptador de entrada, tiempo, colisiones y representación visual.
+`src/domain/` es TypeScript puro (no importa Phaser); `src/application/` coordina casos de uso; `src/game/` adapta Phaser y dibuja. Las pruebas están en `tests/`.
