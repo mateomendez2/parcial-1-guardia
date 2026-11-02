@@ -406,11 +406,12 @@ export class GameScene extends Phaser.Scene {
       this.add.rectangle(center.x, center.y, TILE_SIZE - 2, TILE_SIZE - 2, 0x8a5a1c, 0.55);
     }
     const exit = cellCenter(this.level.exit, TILE_SIZE);
-    this.add.rectangle(exit.x, exit.y, TILE_SIZE - 4, TILE_SIZE - 4, 0x2f9e5b, 0.85);
+    // Above the HUD (depth 10) so the exit stays visible when it falls under the panel.
+    this.add.rectangle(exit.x, exit.y, TILE_SIZE - 4, TILE_SIZE - 4, 0x2f9e5b, 0.95).setDepth(11);
     this.add
       .text(exit.x, exit.y, "SALIDA", { color: "#d8ffe6", fontFamily: "monospace", fontSize: "9px" })
       .setOrigin(0.5)
-      .setDepth(3);
+      .setDepth(12);
   }
 
   private guardArrived(): boolean {

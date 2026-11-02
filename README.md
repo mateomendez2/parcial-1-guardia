@@ -40,7 +40,7 @@ El HUD (arriba a la derecha) muestra la semilla del escenario, la navegación, e
 
 - GDD: [`docs/tp-final/GDD.md`](docs/tp-final/GDD.md)
 - Specs: [`specs/tp-final/`](specs/tp-final/)
-- Presentación: [`docs/tp-final/presentacion`](docs/tp-final/) (para la clase del 4/11)
+- Presentación (clase del 4/11): [`docs/tp-final/presentacion-guardia-de-sigilo.pptx`](docs/tp-final/presentacion-guardia-de-sigilo.pptx)
 - Trabajos anteriores: [`docs/upgrades/`](docs/upgrades/) y [`docs/practica-navegacion/`](docs/practica-navegacion/)
 
 ## Arquitectura
